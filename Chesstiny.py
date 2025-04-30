@@ -2,79 +2,94 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
-import os
 
-# Load the data
+# === Load the TSV ===
 df = pd.read_csv("data-verified.tsv", sep="\t")
+print(f"✅ Loaded {len(df)} boards.")
 
-# Settings
+# === Settings ===
 tile_size = 8
-tile_px = 48
+tile_px = 24  # keep smaller to fit more boards
 board_px = tile_px * tile_size
-num_tiles = len(df)
-grid_size = int(np.ceil(np.sqrt(num_tiles)))
-canvas_px = board_px * grid_size
+df_sorted = df.sort_values(by="frequency").reset_index(drop=True)
 
-# Mappings
-color_map = {
-    'darkGray': 0.2, 'lightRed': 0.6, 'darkRed': 0.4, 'lightGray': 0.8,
-    'white': 1.0, 'black': 0.0, 'blue': 0.5, 'pink': 0.7,
-    'green': 0.3, 'orange': 0.55, 'yellow': 0.9, 'purple': 0.45,
+# === Grid layout ===
+grid_width = 20
+grid_height = int(np.ceil(len(df_sorted) / grid_width))
+canvas_width = grid_width * board_px
+canvas_height = grid_height * board_px
+
+# === Fill colors ===
+fill_rgb_map = {
+    'darkGray': (0.3, 0.3, 0.3), 'lightRed': (0.9, 0.3, 0.3), 'darkRed': (0.6, 0.1, 0.1),
+    'lightGray': (0.8, 0.8, 0.8), 'white': (1.0, 1.0, 1.0), 'black': (0.0, 0.0, 0.0),
+    'blue': (0.3, 0.3, 0.8), 'pink': (1.0, 0.7, 0.8), 'green': (0.3, 0.8, 0.3),
+    'orange': (0.95, 0.6, 0.2), 'yellow': (1.0, 1.0, 0.6), 'purple': (0.6, 0.4, 0.8)
 }
 
-piece_value_map = {
-    '': 1.0, 'Pw': 0.9, 'Pb': 0.1, 'Rw': 0.85, 'Rb': 0.15,
-    'Nw': 0.8, 'Nb': 0.2, 'Bw': 0.75, 'Bb': 0.25,
-    'Qw': 0.7, 'Qb': 0.3, 'Kw': 0.65, 'Kb': 0.35
+# === Corrected Unicode mapping (outlined = black) ===
+unicode_pieces = {
+    'Pw': '♟', 'Pb': '♙',
+    'Rw': '♜', 'Rb': '♖',
+    'Nw': '♞', 'Nb': '♘',
+    'Bw': '♝', 'Bb': '♗',
+    'Qw': '♛', 'Qb': '♕',
+    'Kw': '♚', 'Kb': '♔'
 }
 
 def parse_board_string(board_str):
-    return np.array(board_str.split(",")).reshape((8, 8))
+    cells = board_str.split(",")
+    return np.array(cells).reshape((8, 8)) if len(cells) == 64 else None
 
-# Sort by frequency
-df_sorted = df.sort_values(by="frequency").reset_index(drop=True)
+# === Setup canvas ===
+fig, ax = plt.subplots(figsize=(canvas_width / 100, canvas_height / 100), dpi=100)
+ax.set_xlim(0, canvas_width)
+ax.set_ylim(0, canvas_height)
+ax.set_facecolor("white")
+ax.axis("off")
 
-# Create the plot
-fig, ax = plt.subplots(figsize=(16, 16))
-ax.set_xlim(0, canvas_px)
-ax.set_ylim(0, canvas_px)
-ax.set_xticks([])
-ax.set_yticks([])
-ax.set_facecolor('white')
-
-# Draw each tile
+# === Draw boards ===
 for idx, row in df_sorted.iterrows():
     board = parse_board_string(row["board"])
-    fill_val = color_map.get(row["fill"], 1.0)
-    row_idx = idx // grid_size
-    col_idx = idx % grid_size
-    x_offset = col_idx * board_px
-    y_offset = canvas_px - (row_idx + 1) * board_px
+    if board is None:
+        print(f"⚠️ Skipping malformed board at row {idx}")
+        continue
+
+    fill_name = str(row.get("fill", "white"))
+    fill_color = fill_rgb_map.get(fill_name, (1.0, 1.0, 1.0))
+    if fill_name not in fill_rgb_map:
+        print(f"⚠️ Unknown fill '{fill_name}' at row {idx}, defaulting to white")
+
+    row_idx = idx // grid_width
+    col_idx = idx % grid_width
+    x0 = col_idx * board_px
+    y0 = canvas_height - (row_idx + 1) * board_px
 
     for y in range(8):
         for x in range(8):
             piece = board[y, x]
-            color_val = str(0.6 * fill_val + 0.4 * piece_value_map.get(piece, 1.0))
             rect = patches.Rectangle(
-                (x_offset + x * tile_px, y_offset + y * tile_px),
+                (x0 + x * tile_px, y0 + y * tile_px),
                 tile_px, tile_px,
-                facecolor=color_val, edgecolor='black', linewidth=0.5
+                facecolor=fill_color,
+                edgecolor='black', linewidth=0.5
             )
             ax.add_patch(rect)
+
             if piece:
+                symbol = unicode_pieces.get(piece, '?')
+                brightness = 0.299 * fill_color[0] + 0.587 * fill_color[1] + 0.114 * fill_color[2]
+                text_color = 'white' if brightness < 0.5 else 'black'
                 ax.text(
-                    x_offset + x * tile_px + tile_px / 2,
-                    y_offset + y * tile_px + tile_px / 2,
-                    piece,
-                    fontsize=5, ha='center', va='center',
-                    color='red' if 'w' in piece else 'black'
+                    x0 + x * tile_px + tile_px / 2,
+                    y0 + y * tile_px + tile_px / 2,
+                    symbol,
+                    fontsize=tile_px * 0.6,
+                    ha='center', va='center',
+                    color=text_color
                 )
 
-# Save files
-output_png = "destiny2_chess_mosaic.png"
-output_pdf = "destiny2_chess_mosaic.pdf"
-fig.savefig(output_png, dpi=300, bbox_inches='tight')
-fig.savefig(output_pdf, bbox_inches='tight')
-plt.close(fig)
-
-print(f"Saved:\n  PNG: {output_png}\n  PDF: {output_pdf}")
+# === Save the result ===
+fig.savefig("destiny2_chess_mosaic_colored.png", dpi=100, bbox_inches='tight')
+fig.savefig("destiny2_chess_mosaic_colored.pdf", bbox_inches='tight')
+print("✅ Saved final output to PNG and PDF.")
